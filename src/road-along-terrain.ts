@@ -13,16 +13,12 @@ const map = new mapboxgl.Map({
   bearing: 150,
   // Choose from Mapbox's core styles, or make your own style with Mapbox Studio
   style: 'mapbox://styles/mapbox/satellite-streets-v12',
-  interactive: true,
   antialias: true
 });
 
-function createRoad(points: Array<[number, number, number]>, scene: BABYLON.Scene) {
+function createRoad(points: BABYLON.Vector3[], scene: BABYLON.Scene) {
   const line = BABYLON.MeshBuilder.CreateLines('lines', {
-    points: points.map((p) => {
-      const mercatorCoord = mapboxgl.MercatorCoordinate.fromLngLat([p[0], p[1]], p[2]);
-      return new BABYLON.Vector3(mercatorCoord.x, mercatorCoord.y, mercatorCoord.z);
-    }),
+    points,
   }, scene);
   line.color = new BABYLON.Color3(1, 0, 0);
 }
@@ -59,14 +55,26 @@ class BabylonLayer implements CustomLayerInterface {
     this.scene.ambientColor = new BABYLON.Color3(1, 1, 1);
     this.camera = new BABYLON.Camera("mapbox-camera", new BABYLON.Vector3(), this.scene);
     const light = new BABYLON.HemisphericLight("mapbox-light", new BABYLON.Vector3(0.5, 0.5, 4000), this.scene);
-    createRoad(this.points, this.scene);
+    const path = this.points.map((p) => {
+      const mercatorCoord = mapboxgl.MercatorCoordinate.fromLngLat([p[0], p[1]], p[2]);
+      return new BABYLON.Vector3(mercatorCoord.x, mercatorCoord.y, mercatorCoord.z);
+    })
+    const modelCoord = mapboxgl.MercatorCoordinate.fromLngLat([this.points[0][0], this.points[0][1]], this.points[0][2]);
+    const scaleFactor = modelCoord.meterInMercatorCoordinateUnits() * 10;
+    const position = new BABYLON.Vector3(modelCoord.x, modelCoord.y, modelCoord.z);
+    BABYLON.SceneLoader.AppendAsync("./", "CAR.glb", this.scene).then(scene => {
+      const mesh = scene.rootNodes[3] as BABYLON.Mesh;
+      mesh.rotation = new BABYLON.Vector3(Math.PI / 2, 0, 0);
+      mesh.scaling = new BABYLON.Vector3(scaleFactor, scaleFactor, scaleFactor);
+      mesh.position = position;
+    });
+    createRoad(path, this.scene);
   }
 
   render = (gl: WebGL2RenderingContext, matrix: number[]) => {
     // projection & view matrix
     const cameraMatrix = BABYLON.Matrix.FromArray(matrix);
     this.camera!.freezeProjectionMatrix(cameraMatrix);
-
     this.scene!.render(false);
     this.map!.triggerRepaint();
   }

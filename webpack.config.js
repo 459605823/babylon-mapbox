@@ -16,7 +16,8 @@ module.exports = {
     port: 8081,
     hot: true,
     static: {
-      publicPath: "./dist"
+      directory: path.join(__dirname, "public"),
+      publicPath: "/"
     }
   },
   output: {
