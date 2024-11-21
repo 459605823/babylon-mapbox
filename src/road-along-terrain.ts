@@ -5,10 +5,11 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 
 mapboxgl.accessToken =
   'pk.eyJ1IjoibGl1ayIsImEiOiJjanczNmJoZjkwY3IxM3lxcTd1NmMwZWxjIn0.11SpcY8De0c1q6S3a-2Qcg';
+const center = [6.58968, 45.39701] as [number, number];
 const map = new mapboxgl.Map({
   container: 'map',
   zoom: 13,
-  center: [6.58968, 45.39701],
+  center,
   pitch: 76,
   bearing: 150,
   // Choose from Mapbox's core styles, or make your own style with Mapbox Studio
@@ -21,6 +22,7 @@ function createRoad(points: BABYLON.Vector3[], scene: BABYLON.Scene) {
     points,
   }, scene);
   line.color = new BABYLON.Color3(1, 0, 0);
+  return line
 }
 
 class BabylonLayer implements CustomLayerInterface {
@@ -31,6 +33,7 @@ class BabylonLayer implements CustomLayerInterface {
   private map: Map | undefined;
   private scene: BABYLON.Scene | undefined;
   private camera: BABYLON.Camera | undefined;
+  private modelMatrix: BABYLON.Matrix | undefined;
 
   points: Array<[number, number, number]>;
 
@@ -42,7 +45,7 @@ class BabylonLayer implements CustomLayerInterface {
   onAdd = (map: Map, gl: WebGL2RenderingContext) => {
     this.map = map;
     const engine = new BABYLON.Engine(gl, true, {
-      useHighPrecisionMatrix: true
+      useHighPrecisionMatrix: true,
     }, true);
 
     this.scene = new BABYLON.Scene(engine);
@@ -55,26 +58,50 @@ class BabylonLayer implements CustomLayerInterface {
     this.scene.ambientColor = new BABYLON.Color3(1, 1, 1);
     this.camera = new BABYLON.Camera("mapbox-camera", new BABYLON.Vector3(), this.scene);
     const light = new BABYLON.HemisphericLight("mapbox-light", new BABYLON.Vector3(0.5, 0.5, 4000), this.scene);
+
+    // parameters to ensure the model is georeferenced correctly on the map
+    const worldCoord = mapboxgl.MercatorCoordinate.fromLngLat(center, 0)
+    const worldRotate = [0, 0, 0]
+    const worldScale = worldCoord.meterInMercatorCoordinateUnits();
+    this.modelMatrix = BABYLON.Matrix.Compose(
+      new BABYLON.Vector3(worldScale, worldScale, worldScale),
+      BABYLON.Quaternion.FromEulerAngles(
+        worldRotate[0],
+        worldRotate[1],
+        worldRotate[2]
+      ),
+      new BABYLON.Vector3(worldCoord.x, worldCoord.y, worldCoord.z)
+    );
+
+    const world = new BABYLON.TransformNode("world", this.scene);
+    const axes = new BABYLON.Debug.AxesViewer(this.scene, 500, 1)
+    axes.xAxis.parent = world;
+    axes.yAxis.parent = world;
+    axes.zAxis.parent = world;
+
     const path = this.points.map((p) => {
       const mercatorCoord = mapboxgl.MercatorCoordinate.fromLngLat([p[0], p[1]], p[2]);
-      return new BABYLON.Vector3(mercatorCoord.x, mercatorCoord.y, mercatorCoord.z);
+      const x = (mercatorCoord.x - worldCoord.x) / worldScale;
+      const y = (mercatorCoord.y - worldCoord.y) / worldScale;
+      const z = (mercatorCoord.z - worldCoord.z) / worldScale;
+      return new BABYLON.Vector3(x, y, z);
     })
-    const modelCoord = mapboxgl.MercatorCoordinate.fromLngLat([this.points[0][0], this.points[0][1]], this.points[0][2]);
-    const scaleFactor = modelCoord.meterInMercatorCoordinateUnits() * 10;
-    const position = new BABYLON.Vector3(modelCoord.x, modelCoord.y, modelCoord.z);
+    const line = createRoad(path, this.scene);
+    line.parent = world;
     BABYLON.SceneLoader.AppendAsync("./", "CAR.glb", this.scene).then(scene => {
       const mesh = scene.rootNodes[3] as BABYLON.Mesh;
       mesh.rotation = new BABYLON.Vector3(Math.PI / 2, 0, 0);
-      mesh.scaling = new BABYLON.Vector3(scaleFactor, scaleFactor, scaleFactor);
-      mesh.position = position;
+      mesh.position = path[0];
+      mesh.scaling.setAll(10)
+      mesh.parent = world;
     });
-    createRoad(path, this.scene);
   }
 
   render = (gl: WebGL2RenderingContext, matrix: number[]) => {
     // projection & view matrix
     const cameraMatrix = BABYLON.Matrix.FromArray(matrix);
-    this.camera!.freezeProjectionMatrix(cameraMatrix);
+    const mvpMatrix = this.modelMatrix!.multiply(cameraMatrix);
+    this.camera!.freezeProjectionMatrix(mvpMatrix);
     this.scene!.render(false);
     this.map!.triggerRepaint();
   }
